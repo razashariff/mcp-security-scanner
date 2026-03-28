@@ -1,0 +1,24 @@
+{
+  "name": "@cybersecai/mcp-security-scanner",
+  "version": "0.1.0",
+  "description": "MCP Security Scanner -- Security testing tools for AI agents and MCP servers. Add to Cursor, Claude Desktop, or any MCP client.",
+  "main": "src/index.js",
+  "bin": {
+    "mcp-security-scanner": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/run.js"
+  },
+  "keywords": ["mcp", "security", "scanner", "ai-agent", "owasp", "pentest"],
+  "author": "Raza Sharif <raza@cybersecai.co.uk> (https://cybersecai.co.uk)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/razashariff/mcp-security-scanner"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": ["src/", "config/", "README.md", "LICENSE"]
+}
