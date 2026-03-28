@@ -1,10 +1,10 @@
 {
-  "name": "@cybersecai/mcp-security-scanner",
+  "name": "@proofxhq/mcp-security-scanner",
   "version": "0.1.0",
   "description": "MCP Security Scanner -- Security testing tools for AI agents and MCP servers. Add to Cursor, Claude Desktop, or any MCP client.",
   "main": "src/index.js",
   "bin": {
-    "mcp-security-scanner": "src/index.js"
+    "@proofxhq/mcp-security-scanner": "src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",
