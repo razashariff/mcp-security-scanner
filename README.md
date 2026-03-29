@@ -2,7 +2,7 @@
 
 Security testing tools for AI agents and MCP servers. Install as an MCP server in Cursor, Claude Desktop, or any MCP client.
 
-8 tools. Zero dependencies. One install.
+9 tools. Zero dependencies. One install.
 
 ## Install
 
@@ -55,9 +55,15 @@ Then ask your AI:
 | Tool | What it does |
 |------|-------------|
 | `safe_to_install` | Check any npm or PyPI package before installing. Returns SAFE/CAUTION/DANGER verdict with full vulnerability details. |
-| `check_cves` | Query the OSV.dev database for known vulnerabilities in any package. |
+| `check_cves` | Check any package for known vulnerabilities. |
 | `audit_dependencies` | Audit all dependencies in a package.json or requirements.txt file at once. |
 | `check_repo` | Check if a GitHub repo is trustworthy. Analyses age, stars, activity, license, and security signals. Returns a trust score out of 100. |
+
+### Agent Threat Intelligence
+
+| Tool | What it does |
+|------|-------------|
+| `check_agent` | Check if an AI agent, MCP server, or package has known threat entries. Queries the Agent Threat Database for real-world incidents including data exfiltration, credential theft, and supply chain attacks. |
 
 ## Examples
 

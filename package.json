@@ -1,7 +1,7 @@
 {
   "name": "cybersecify",
-  "version": "0.2.0",
-  "description": "Cybersecify -- Security agent for AI developers. Scan MCP servers, check packages, audit dependencies, verify repos. Works in Cursor, Claude Desktop, any MCP client.",
+  "version": "0.3.0",
+  "description": "Cybersecify -- Security agent for AI developers. Scan MCP servers, check packages, audit dependencies, verify repos, check agent threats. Works in Cursor, Claude Desktop, any MCP client.",
   "main": "src/index.js",
   "bin": {
     "cybersecify": "src/index.js"
@@ -10,7 +10,7 @@
     "start": "node src/index.js",
     "test": "node test/run.js"
   },
-  "keywords": ["mcp", "security", "scanner", "ai-agent", "owasp", "pentest"],
+  "keywords": ["mcp", "security", "scanner", "ai-agent", "owasp", "pentest", "threat-intelligence", "agent-security"],
   "author": "Raza Sharif <raza@cybersecai.co.uk> (https://cybersecai.co.uk)",
   "license": "MIT",
   "repository": {

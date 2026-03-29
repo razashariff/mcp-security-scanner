@@ -260,6 +260,20 @@ class MCPSecurityScanner {
           required: ['repo'],
         },
       },
+      {
+        name: 'check_agent',
+        description: 'Check if an AI agent, MCP server, or package has known threat entries in the Agent Threat Database. Queries real-world incidents including data exfiltration, credential theft, prompt injection, and supply chain attacks.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Agent name, MCP server name, or package name to check (e.g., mcp-remote, openclaw, litellm)',
+            },
+          },
+          required: ['query'],
+        },
+      },
     ];
   }
 
@@ -296,6 +310,9 @@ class MCPSecurityScanner {
           break;
         case 'check_repo':
           result = await this._checkRepo(args);
+          break;
+        case 'check_agent':
+          result = await this._checkAgent(args);
           break;
         default:
           this._respondError(id, -32601, `Unknown tool: ${name}`);
@@ -1334,6 +1351,119 @@ class MCPSecurityScanner {
       return report;
     } catch (e) {
       return `Error checking repository: ${e.message}`;
+    }
+  }
+
+  // ==========================================================================
+  // check_agent — Query Agent Threat Database
+  // ==========================================================================
+
+  async _checkAgent(args) {
+    const query = (args.query || '').toLowerCase().trim();
+    if (!query) return 'Error: query is required. Provide an agent name, MCP server name, or package name.';
+
+    const ATD_URL = 'https://raw.githubusercontent.com/razashariff/agent-threat-db/main/entries/';
+    const INDEX_URL = 'https://api.github.com/repos/razashariff/agent-threat-db/contents/entries';
+
+    try {
+      // Fetch list of entries from GitHub
+      const indexData = await new Promise((resolve, reject) => {
+        https.get(INDEX_URL, { headers: { 'User-Agent': 'cybersecify' } }, (res) => {
+          let body = '';
+          res.on('data', c => body += c);
+          res.on('end', () => {
+            try { resolve(JSON.parse(body)); } catch { reject(new Error('Failed to parse index')); }
+          });
+        }).on('error', reject);
+      });
+
+      if (!Array.isArray(indexData)) {
+        return 'Agent Threat Database: Unable to fetch entries. The database may be temporarily unavailable.';
+      }
+
+      // Fetch and check each entry
+      const matches = [];
+      for (const file of indexData) {
+        if (!file.name.endsWith('.json')) continue;
+
+        const entry = await new Promise((resolve, reject) => {
+          https.get(file.download_url, { headers: { 'User-Agent': 'cybersecify' } }, (res) => {
+            let body = '';
+            res.on('data', c => body += c);
+            res.on('end', () => {
+              try { resolve(JSON.parse(body)); } catch { resolve(null); }
+            });
+          }).on('error', () => resolve(null));
+        });
+
+        if (!entry) continue;
+
+        // Match against query
+        const searchFields = [
+          entry.id,
+          entry.summary,
+          entry.details,
+          ...(entry.affected || []).map(a => a.package?.name || ''),
+          entry.agent_threat?.agent_type || '',
+          entry.agent_threat?.category || '',
+        ].join(' ').toLowerCase();
+
+        if (searchFields.includes(query)) {
+          matches.push(entry);
+        }
+      }
+
+      if (matches.length === 0) {
+        return [
+          `Agent Threat Check: "${args.query}"`,
+          '',
+          'Status: CLEAN',
+          'No known threats found in the Agent Threat Database.',
+          '',
+          `Checked ${indexData.filter(f => f.name.endsWith('.json')).length} threat entries.`,
+          '',
+          'Note: A clean result does not guarantee safety. New threats are added as they are discovered.',
+          'Database: https://github.com/razashariff/agent-threat-db',
+        ].join('\n');
+      }
+
+      const lines = [
+        `Agent Threat Check: "${args.query}"`,
+        '',
+        `Status: FLAGGED — ${matches.length} threat(s) found`,
+        '',
+      ];
+
+      for (const m of matches) {
+        const severity = m.severity?.[0]?.score || 'Unknown';
+        lines.push(`--- ${m.id} ---`);
+        lines.push(`Summary: ${m.summary}`);
+        lines.push(`Category: ${m.agent_threat?.category || 'Unknown'}`);
+        lines.push(`Agent Type: ${m.agent_threat?.agent_type || 'Unknown'}`);
+        lines.push(`Severity: ${severity}`);
+        lines.push(`Published: ${m.published || 'Unknown'}`);
+        if (m.aliases?.length) lines.push(`Aliases: ${m.aliases.join(', ')}`);
+        lines.push(`Attack Vector: ${m.agent_threat?.attack_vector || 'Unknown'}`);
+        if (m.agent_threat?.mitigations?.length) {
+          lines.push('Mitigations:');
+          for (const mit of m.agent_threat.mitigations) {
+            lines.push(`  - ${mit}`);
+          }
+        }
+        if (m.references?.length) {
+          lines.push('References:');
+          for (const ref of m.references) {
+            lines.push(`  - ${ref.url}`);
+          }
+        }
+        lines.push('');
+      }
+
+      lines.push('Database: https://github.com/razashariff/agent-threat-db');
+
+      return lines.join('\n');
+    } catch (e) {
+      return `Agent Threat Check: Error querying database — ${e.message}`;
     }
   }
 }
