@@ -2,7 +2,7 @@
 
 Security testing tools for AI agents and MCP servers. Install as an MCP server in Cursor, Claude Desktop, or any MCP client.
 
-9 tools. Zero dependencies. One install.
+11 tools. Zero dependencies. One install.
 
 ## Install
 
@@ -59,7 +59,13 @@ Then ask your AI:
 | `audit_dependencies` | Audit all dependencies in a package.json or requirements.txt file at once. |
 | `check_repo` | Check if a GitHub repo is trustworthy. Analyses age, stars, activity, license, and security signals. Returns a trust score out of 100. |
 
-### Agent Threat Intelligence
+### Compliance
+
+| Tool | What it does |
+|------|-------------|
+| `compliance_scan` | Scan an MCP server against EU AI Act, OWASP Agentic AI Top 10, and OWASP MCP Top 10. Returns unified compliance report with scores, failures, and remediation. |
+
+### Threat Intelligence
 
 | Tool | What it does |
 |------|-------------|

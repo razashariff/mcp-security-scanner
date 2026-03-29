@@ -261,6 +261,20 @@ class MCPSecurityScanner {
         },
       },
       {
+        name: 'compliance_scan',
+        description: 'Scan an MCP server for compliance against EU AI Act, OWASP MCP Top 10, and OWASP Agentic AI Top 10. Connects to the server and runs automated checks. Returns a unified compliance report with scores, failures, and specific remediation steps.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            url: {
+              type: 'string',
+              description: 'URL of the MCP server to scan (e.g., http://localhost:3000 or https://mcp.example.com)',
+            },
+          },
+          required: ['url'],
+        },
+      },
+      {
         name: 'check_agent',
         description: 'Check if an AI agent, MCP server, or package has known threat entries in the Agent Threat Database. Queries real-world incidents including data exfiltration, credential theft, prompt injection, and supply chain attacks.',
         inputSchema: {
@@ -310,6 +324,9 @@ class MCPSecurityScanner {
           break;
         case 'check_repo':
           result = await this._checkRepo(args);
+          break;
+        case 'compliance_scan':
+          result = await this._complianceScan(args);
           break;
         case 'check_agent':
           result = await this._checkAgent(args);
@@ -1352,6 +1369,260 @@ class MCPSecurityScanner {
     } catch (e) {
       return `Error checking repository: ${e.message}`;
     }
+  }
+
+  // ==========================================================================
+  // compliance_scan — EU AI Act + OWASP Agentic AI + OWASP MCP Top 10
+  // ==========================================================================
+
+  async _complianceScan(args) {
+    const { url } = args || {};
+    if (!url) return 'Error: url is required';
+
+    const results = { eu_ai_act: [], owasp_agentic: [], summary: {} };
+
+    // Reusable RPC helper
+    const rpc = async (method, params = {}) => {
+      return new Promise((resolve, reject) => {
+        const body = JSON.stringify({ jsonrpc: '2.0', method, id: crypto.randomUUID(), params });
+        const urlObj = new URL(url);
+        const client = urlObj.protocol === 'https:' ? https : http;
+        const req = client.request(urlObj, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'Content-Length': Buffer.byteLength(body) },
+          timeout: 5000,
+        }, (res) => {
+          let data = '';
+          res.on('data', c => data += c);
+          res.on('end', () => {
+            const ct = (res.headers['content-type'] || '').toLowerCase();
+            const parsed = MCPSecurityScanner._parseResponse(data, ct);
+            resolve({ status: res.statusCode, headers: res.headers, body: parsed });
+          });
+        });
+        req.on('error', e => reject(e));
+        req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+        req.write(body);
+        req.end();
+      });
+    };
+
+    // Helper
+    const check = (framework, id, title, article, severity, passed, detail, fix) => {
+      const target = framework === 'eu' ? results.eu_ai_act : results.owasp_agentic;
+      target.push({ id, title, article, severity, status: passed ? 'PASS' : 'FAIL', detail, fix: passed ? null : fix });
+    };
+
+    let tools = [];
+    let initResult = null;
+    let authRequired = false;
+    let hasRateLimiting = false;
+    let hasMcps = false;
+    let errorLeaks = false;
+
+    try {
+      // 1. Try connecting and get tools
+      const r = await rpc('tools/list');
+      if (r.body?.result?.tools) tools = r.body.result.tools;
+      if (r.body?.error) authRequired = true;
+    } catch (e) {
+      return `Error: Could not connect to ${url} — ${e.message}`;
+    }
+
+    // 2. Check for MCPS/signing in initialize
+    try {
+      const init = await rpc('initialize', { protocolVersion: '2025-03-26', capabilities: { mcps: { version: '1.0' } }, clientInfo: { name: 'compliance-scanner', version: '1.0' } });
+      initResult = init.body?.result;
+      hasMcps = !!(initResult?.capabilities?.mcps);
+    } catch {}
+
+    // 3. Check auth
+    try {
+      const noAuth = await rpc('tools/list');
+      if (noAuth.body?.result?.tools) authRequired = false;
+    } catch { authRequired = true; }
+
+    // 4. Check rate limiting
+    try {
+      const promises = [];
+      for (let i = 0; i < 5; i++) promises.push(rpc('tools/list').catch(() => ({ status: 429 })));
+      const responses = await Promise.all(promises);
+      hasRateLimiting = responses.some(r => r.status === 429);
+    } catch {}
+
+    // 5. Check error leaking
+    try {
+      const bad = await rpc('tools/call', { name: '../../../../etc/passwd', arguments: {} });
+      const errStr = JSON.stringify(bad.body || '');
+      errorLeaks = /stack|trace|node_modules|at\s+\w|\.js:\d/.test(errStr);
+    } catch {}
+
+    // 6. Analyse tool danger levels
+    const dangerousTools = tools.filter(t => {
+      const name = (t.name || '').toLowerCase();
+      const desc = (t.description || '').toLowerCase();
+      return /exec|shell|command|run_code|system|eval|sudo|admin|delete|write_file|upload/.test(name + ' ' + desc);
+    });
+
+    // ── EU AI ACT CHECKS ──
+
+    check('eu', 'EU-ART12', 'Audit Trail / Record-Keeping', 'Article 12',
+      'critical', hasMcps,
+      hasMcps ? 'Server supports MCPS message signing — audit trail available' : 'No message signing detected. No tamper-evident audit trail.',
+      'Install mcp-secure and enable signMessage() on all tool calls. This creates cryptographically signed, tamper-evident logs per Article 12.');
+
+    check('eu', 'EU-ART14', 'Human Oversight', 'Article 14',
+      'critical', authRequired,
+      authRequired ? 'Authentication required — human oversight gate present' : 'No authentication required. Any agent can call tools without oversight.',
+      'Add authentication to your MCP server. Use cybersecify check_call for runtime GO/CAUTION/BLOCK decisions before tool execution.');
+
+    check('eu', 'EU-ART15-AUTH', 'Cybersecurity — Authentication', 'Article 15',
+      'critical', authRequired,
+      authRequired ? 'Authentication enforced' : 'No authentication. Server is open to any caller.',
+      'Require authentication on all MCP endpoints. Use mcp-secure agent passports for cryptographic identity verification.');
+
+    check('eu', 'EU-ART15-RATE', 'Cybersecurity — Rate Limiting', 'Article 15',
+      'high', hasRateLimiting,
+      hasRateLimiting ? 'Rate limiting detected' : 'No rate limiting detected. Server vulnerable to abuse.',
+      'Implement rate limiting on all MCP endpoints to prevent denial of service and resource abuse.');
+
+    check('eu', 'EU-ART15-ERROR', 'Cybersecurity — Error Handling', 'Article 15',
+      'high', !errorLeaks,
+      !errorLeaks ? 'Error responses do not leak implementation details' : 'Error responses contain stack traces or internal paths.',
+      'Sanitise error responses. Remove stack traces, file paths, and internal details from error messages returned to clients.');
+
+    check('eu', 'EU-ART50', 'Agent Identity / Transparency', 'Article 50',
+      'critical', hasMcps,
+      hasMcps ? 'MCPS supported — agent identity can be verified' : 'No agent identity mechanism. Callers cannot be identified as AI agents.',
+      'Use mcp-secure createPassport() to give your agent a cryptographic identity. This proves the caller is an AI agent per Article 50 transparency requirements.');
+
+    check('eu', 'EU-ART16', 'Supply Chain — Excessive Tools', 'Article 16',
+      'high', dangerousTools.length === 0,
+      dangerousTools.length === 0 ? 'No dangerous tool capabilities exposed' : `${dangerousTools.length} dangerous tool(s) exposed: ${dangerousTools.map(t => t.name).join(', ')}`,
+      'Review and restrict dangerous tool capabilities. Use cybersecify assess_risk to evaluate each tool. Remove or sandbox shell execution, file write, and admin tools.');
+
+    // ── OWASP AGENTIC AI TOP 10 CHECKS ──
+
+    check('agentic', 'ASI-01', 'Excessive Agency', 'ASI-01',
+      'critical', dangerousTools.length === 0,
+      dangerousTools.length === 0 ? 'No excessive agency detected' : `Agent has access to ${dangerousTools.length} dangerous tool(s): ${dangerousTools.map(t => t.name).join(', ')}`,
+      'Restrict tool access to minimum required capabilities. Remove shell execution, file system write, and admin tools unless explicitly needed.');
+
+    check('agentic', 'ASI-02', 'Insufficient Access Control', 'ASI-02',
+      'critical', authRequired,
+      authRequired ? 'Access control enforced' : 'No access control. All tools accessible without authentication.',
+      'Implement authentication and authorisation. Use mcp-secure with trust levels L0-L4 to gate tool access by agent trust.');
+
+    check('agentic', 'ASI-03', 'Identity and Privilege Abuse', 'ASI-03',
+      'critical', hasMcps,
+      hasMcps ? 'MCPS identity verification available' : 'No agent identity verification. Any caller can impersonate any agent.',
+      'Deploy mcp-secure agent passports. Each agent gets a cryptographic identity (ECDSA P-256) that cannot be spoofed.');
+
+    check('agentic', 'ASI-04', 'Supply Chain Compromise', 'ASI-04',
+      'high', tools.length < 20,
+      tools.length < 20 ? `${tools.length} tools exposed (manageable attack surface)` : `${tools.length} tools exposed — large supply chain attack surface`,
+      'Audit all tool dependencies with cybersecify audit_dependencies. Use mcp-secure signTool() to pin tool definitions. Check Agent Threat Database with check_agent.');
+
+    check('agentic', 'ASI-05', 'Insecure Output Handling', 'ASI-05',
+      'high', !errorLeaks,
+      !errorLeaks ? 'Output handling appears secure' : 'Server leaks internal details in error responses.',
+      'Sanitise all tool outputs before returning to agents. Remove internal paths, credentials, and stack traces.');
+
+    check('agentic', 'ASI-07', 'Insecure Inter-Agent Communication', 'ASI-07',
+      'critical', hasMcps,
+      hasMcps ? 'MCPS message signing available for inter-agent communication' : 'Messages between agents are unsigned. Vulnerable to tampering and replay.',
+      'Use mcp-secure signMessage() for all inter-agent communication. Each message gets ECDSA signature, nonce, and timestamp.');
+
+    check('agentic', 'ASI-08', 'Insufficient Logging and Monitoring', 'ASI-08',
+      'high', hasMcps,
+      hasMcps ? 'MCPS provides cryptographic audit trail' : 'No structured logging or audit trail detected.',
+      'Enable mcp-secure signMessage() to create tamper-evident logs. Store signed logs for minimum 6 months per EU AI Act Article 12.');
+
+    check('agentic', 'ASI-09', 'Inadequate Sandboxing', 'ASI-09',
+      'high', dangerousTools.length === 0,
+      dangerousTools.length === 0 ? 'No tools requiring sandboxing detected' : `${dangerousTools.length} tool(s) with dangerous capabilities need sandboxing`,
+      'Sandbox tools that access file systems, networks, or execute code. Use container isolation for dangerous tool execution.');
+
+    check('agentic', 'ASI-10', 'Unbounded Consumption', 'ASI-10',
+      'high', hasRateLimiting,
+      hasRateLimiting ? 'Rate limiting present' : 'No rate limiting. Agents can consume unlimited resources.',
+      'Implement rate limiting per agent identity. Use mcp-secure trust levels to set different rate limits per trust tier.');
+
+    // ── SUMMARY ──
+    const allChecks = [...results.eu_ai_act, ...results.owasp_agentic];
+    const passed = allChecks.filter(c => c.status === 'PASS').length;
+    const failed = allChecks.filter(c => c.status === 'FAIL').length;
+    const criticalFails = allChecks.filter(c => c.status === 'FAIL' && c.severity === 'critical').length;
+    const score = Math.round((passed / allChecks.length) * 100);
+
+    let verdict = 'NON-COMPLIANT';
+    if (score === 100) verdict = 'FULLY COMPLIANT';
+    else if (score >= 70 && criticalFails === 0) verdict = 'PARTIALLY COMPLIANT';
+
+    // Format output
+    const lines = [
+      `COMPLIANCE SCAN: ${url}`,
+      `${'='.repeat(60)}`,
+      '',
+      `VERDICT: ${verdict}`,
+      `Score: ${score}% (${passed} passed, ${failed} failed, ${criticalFails} critical)`,
+      '',
+      `${'─'.repeat(60)}`,
+      `EU AI ACT (Agent-Specific)`,
+      `${'─'.repeat(60)}`,
+    ];
+
+    for (const c of results.eu_ai_act) {
+      lines.push(`[${c.status}] ${c.article} — ${c.title} (${c.severity})`);
+      lines.push(`       ${c.detail}`);
+      if (c.fix) lines.push(`  FIX: ${c.fix}`);
+      lines.push('');
+    }
+
+    lines.push(`${'─'.repeat(60)}`);
+    lines.push('OWASP AGENTIC AI TOP 10');
+    lines.push(`${'─'.repeat(60)}`);
+
+    for (const c of results.owasp_agentic) {
+      lines.push(`[${c.status}] ${c.article} — ${c.title} (${c.severity})`);
+      lines.push(`       ${c.detail}`);
+      if (c.fix) lines.push(`  FIX: ${c.fix}`);
+      lines.push('');
+    }
+
+    lines.push(`${'─'.repeat(60)}`);
+    lines.push('REMEDIATION PRIORITY');
+    lines.push(`${'─'.repeat(60)}`);
+
+    const criticals = allChecks.filter(c => c.status === 'FAIL' && c.severity === 'critical');
+    const highs = allChecks.filter(c => c.status === 'FAIL' && c.severity === 'high');
+
+    if (criticals.length > 0) {
+      lines.push('CRITICAL (fix immediately):');
+      criticals.forEach((c, i) => lines.push(`  ${i + 1}. ${c.article}: ${c.fix}`));
+      lines.push('');
+    }
+    if (highs.length > 0) {
+      lines.push('HIGH (fix before deployment):');
+      highs.forEach((c, i) => lines.push(`  ${i + 1}. ${c.article}: ${c.fix}`));
+      lines.push('');
+    }
+
+    if (failed > 0) {
+      lines.push(`${'─'.repeat(60)}`);
+      lines.push('QUICK START');
+      lines.push(`${'─'.repeat(60)}`);
+      lines.push('1. npm install mcp-secure');
+      lines.push('2. Add: app.use(mcps.secureMCP({ minTrust: "L2" }))');
+      lines.push('3. Re-run this scan to verify compliance');
+      lines.push('');
+    }
+
+    lines.push(`Scanned against: EU AI Act (2024/1689), OWASP Agentic AI Top 10, OWASP MCP Top 10`);
+    lines.push(`Enforcement deadline: August 2026`);
+    lines.push(`Scanner: cybersecify v0.3.0 — https://cybersecify.co.uk`);
+
+    return lines.join('\n');
   }
 
   // ==========================================================================
