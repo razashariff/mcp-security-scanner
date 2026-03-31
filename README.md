@@ -2,7 +2,7 @@
 
 Security testing tools for AI agents and MCP servers. Install as an MCP server in Cursor, Claude Desktop, or any MCP client.
 
-11 tools. Zero dependencies. One install.
+12 tools. Zero dependencies. One install.
 
 ## Install
 
@@ -64,6 +64,7 @@ Then ask your AI:
 | Tool | What it does |
 |------|-------------|
 | `compliance_scan` | Scan an MCP server against EU AI Act, OWASP Agentic AI Top 10, and OWASP MCP Top 10. Returns unified compliance report with scores, failures, and remediation. |
+| `cis_benchmark` | Run the CIS MCP Security Benchmark (Community Draft, 22 controls, 6 sections) against any MCP server. L1/L2 profiles, CIS Controls v8.1 mappings, and gap analysis. |
 
 ### Threat Intelligence
 
@@ -124,4 +125,4 @@ Raza Sharif, [CyberSecAI Ltd](https://cybersecai.co.uk)
 
 ## License
 
-MIT
+Business Source License 1.1 (BSL). Free for non-commercial use. Commercial use requires a license from CyberSecAI Ltd. See [LICENSE](LICENSE) for details.
